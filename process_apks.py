@@ -265,7 +265,7 @@ def main():
         mod_result_path = processor.modify_apk(app['new_display_name'], app['apk_name_prefix'])
         
         if mod_result_path:
-            final_apk_name = f"{app['release_tag_prefix']}_{current_ver}.apk"
+            final_apk_name = f"{app['release_tag_prefix']}-v{current_ver}.apk"
             os.rename(mod_result_path, final_apk_name)
             
             if processor.upload_to_release(app['release_tag_prefix'], final_apk_name, app['repo_url']):
