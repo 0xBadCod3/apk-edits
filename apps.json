@@ -11,7 +11,7 @@
     "apk_name_prefix": "NewPipe Refactor",
     "new_display_name": "NewPipe",
     "release_tag_prefix": "NewPipeRF",
-    "latest_version": ""
+    "latest_version": "0.28.5-57-202604250235"
   },
   {
     "repo_url": "https://github.com/markusfisch/BinaryEye",
