@@ -1,0 +1,14 @@
+[
+  {
+    "repo_url": "https://github.com/RetroMusicPlayer/RetroMusicPlayer",
+    "apk_name_prefix": "Retro Music",
+    "new_display_name": "Music",
+    "release_tag_prefix": "RetroMusic"
+  },
+  {
+    "repo_url": "https://github.com/markusfisch/BinaryEye",
+    "apk_name_prefix": "Binary Eye",
+    "new_display_name": "Scanner",
+    "release_tag_prefix": "BinaryEye"
+  }
+]

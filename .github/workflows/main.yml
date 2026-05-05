@@ -1,0 +1,44 @@
+name: APK Workflow
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Every 6 hours
+  workflow_dispatch: # Manual run
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Download tools
+        run: |
+          wget https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar -O apktool.jar
+          wget https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar -O uber-apk-signer.jar
+          wget https://github.com/REAndroid/APKEditor/releases/download/v1.4.3/APKEditor-1.4.3.jar -O APKEditor.jar
+          # Create a wrapper for apktool to be used as 'apktool' in the script
+          echo 'java -jar "$GITHUB_WORKSPACE/apktool.jar" "$@"' > apktool
+          chmod +x apktool
+          sudo mv apktool /usr/local/bin/apktool
+
+      - name: Run APK modification script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python process_apks.py
