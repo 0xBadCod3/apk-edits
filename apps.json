@@ -4,20 +4,20 @@
     "apk_name_prefix": "Retro Music",
     "new_display_name": "Music",
     "release_tag_prefix": "RetroMusic",
-    "latest_version": "6.6.0"
+    "latest_version": ""
   },
   {
     "repo_url": "https://github.com/TeamNewPipe/NewPipe-refactor-nightly",
     "apk_name_prefix": "NewPipe Refactor",
     "new_display_name": "NewPipe",
     "release_tag_prefix": "NewPipeRF",
-    "latest_version": "0.28.5-57-202604250235"
+    "latest_version": ""
   },
   {
     "repo_url": "https://github.com/markusfisch/BinaryEye",
     "apk_name_prefix": "Binary Eye",
     "new_display_name": "Scanner",
     "release_tag_prefix": "BinaryEye",
-    "latest_version": "1.72.2"
+    "latest_version": ""
   }
 ]
