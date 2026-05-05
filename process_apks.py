@@ -99,8 +99,6 @@ def modify_apk(new_display_name, original_display_name_hint):
                             found_and_replaced = True
 
                     # Case B: The original_display_name_hint exists as a value in strings.xml
-                    # This handles cases where the manifest points to a string we didn't catch, 
-                    # or multiple strings have the same value.
                     if original_display_name_hint and f'>{original_display_name_hint}</string>' in s_content:
                         new_s_content = re.sub(
                             f'<string([^>]*)>{re.escape(original_display_name_hint)}</string>',
@@ -149,37 +147,49 @@ def modify_apk(new_display_name, original_display_name_hint):
                 return os.path.join("output", f)
     return None
 
-def upload_to_release(repo, token, tag, release_name, file_path):
-    print(f"Creating release {tag}...")
+def upload_to_release(repo, token, tag, release_name, file_path, original_repo_url):
+    print(f"Creating/Updating release {tag}...")
     create_url = f"https://api.github.com/repos/{repo}/releases"
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json"
     }
+    
+    body = f"Original Repo: [{original_repo_url}]({original_repo_url})"
+    
     data = {
         "tag_name": tag,
         "name": release_name,
-        "body": f"Automated release for {release_name}",
+        "body": body,
         "draft": False,
-        "prerelease": False
+        "prerelease": False,
+        "make_latest": "false"
     }
     res = requests.post(create_url, headers=headers, json=data)
+    
     if res.status_code != 201:
-        print(f"Failed to create release: {res.text}")
-        # Maybe it already exists? Try to get it.
-        if res.status_code == 422: # Unprocessable Entity, often means tag exists
-            get_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
-            res = requests.get(get_url, headers=headers)
-            if res.status_code != 200:
-                return False
-        else:
+        get_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+        res = requests.get(get_url, headers=headers)
+        if res.status_code != 200:
+            print(f"Failed to find or create release: {res.text}")
             return False
     
-    release_id = res.json()['id']
-    upload_url = res.json()['upload_url'].split('{')[0]
+    release_data = res.json()
+    release_id = release_data['id']
+    upload_url_template = release_data['upload_url']
+    upload_url = upload_url_template.split('{')[0]
     
     filename = os.path.basename(file_path)
+    
+    # Delete ALL existing APK assets (since we want only the latest version to exist)
+    for asset in release_data.get('assets', []):
+        if asset['name'].endswith('.apk'):
+            print(f"Deleting old version: {asset['name']}...")
+            del_url = f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}"
+            requests.delete(del_url, headers=headers)
+
     upload_url = f"{upload_url}?name={filename}"
+
     
     print(f"Uploading {filename} to release...")
     with open(file_path, "rb") as f:
@@ -196,7 +206,6 @@ def upload_to_release(repo, token, tag, release_name, file_path):
 def get_apk_version(apk_path):
     print(f"Extracting version from {apk_path}...")
     try:
-        # Use java -jar explicitly to avoid exec format errors with wrappers
         result = subprocess.run(["java", "-jar", "apktool.jar", "d", apk_path, "-o", "temp_version_check", "-f"], check=True, capture_output=True)
         yml_path = "temp_version_check/apktool.yml"
         if os.path.exists(yml_path):
@@ -269,8 +278,11 @@ def main():
             if os.path.exists(final_name): os.remove(final_name)
             os.rename(modified_path, final_name)
             
-            target_tag = f"{release_tag_prefix}-{actual_version}"
-            if upload_to_release(my_repo, token, target_tag, f"{release_tag_prefix} {actual_version}", final_name):
+            # Static tag and name as requested
+            target_tag = release_tag_prefix
+            release_display_name = release_tag_prefix
+            
+            if upload_to_release(my_repo, token, target_tag, release_display_name, final_name, repo_url):
                 app['latest_version'] = actual_version
                 any_changes = True
         
@@ -290,7 +302,6 @@ def main():
             json.dump(updated_apps, f, indent=2)
         print("\nUpdated apps.json with new versions.")
         
-        # In GHA, we need to commit these changes back to the repo
         if os.environ.get("GITHUB_ACTIONS") == "true":
             subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
             subprocess.run(["git", "config", "user.email", "github-actions@github.com"], check=True)

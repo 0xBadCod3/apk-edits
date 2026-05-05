@@ -1,0 +1,75 @@
+name: Reset Releases
+
+on:
+  workflow_dispatch: # Manual run only
+
+permissions:
+  contents: write
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete all releases and tags
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get all release IDs and delete them
+          RELEASES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" | jq -r '.[].id')
+          
+          for id in $RELEASES; do
+            echo "Deleting release $id"
+            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$id"
+          done
+
+          # Get all tags and delete them
+          TAGS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/tags" | jq -r '.[].name')
+          
+          for tag in $TAGS; do
+            echo "Deleting tag $tag"
+            # Delete local tag
+            git tag -d "$tag" || true
+            # Delete remote tag
+            git push origin --delete "$tag" || true
+          done
+
+      - name: Reset apps.json
+        run: |
+          # Use python to clear latest_version fields
+          python3 -c "
+          import json, os
+          if os.path.exists('apps.json'):
+              with open('apps.json', 'r') as f:
+                  apps = json.load(f)
+              for app in apps:
+                  app['latest_version'] = ''
+              with open('apps.json', 'w') as f:
+                  json.dump(apps, f, indent=2)
+          "
+          
+      - name: Commit and Push changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add apps.json
+          git commit -m "Reset apps.json versions for full rebuild [skip ci]" || echo "No changes to commit"
+          git push origin main
+
+      - name: Trigger Main Workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/main.yml/dispatches" \
+            -d '{"ref":"main"}'
+          echo "Main workflow triggered."
