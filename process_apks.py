@@ -15,13 +15,38 @@ def get_latest_release(repo_url):
     return None
 
 def download_apk(release_data, apk_name_prefix):
-    for asset in release_data.get('assets', []):
-        if asset['name'].startswith(apk_name_prefix) and asset['name'].endswith('.apk'):
-            print(f"Downloading {asset['name']}...")
-            r = requests.get(asset['browser_download_url'])
-            with open("original.apk", "wb") as f:
-                f.write(r.content)
-            return asset['name'], release_data['tag_name']
+    assets = [a for a in release_data.get('assets', []) if a['name'].endswith('.apk')]
+    if not assets:
+        return None, None
+    
+    selected_asset = None
+    release_name = release_data.get('name', '')
+    
+    # Priority 1: If prefix matches the Release Name (Title)
+    if apk_name_prefix and release_name and apk_name_prefix.lower() in release_name.lower():
+        print(f"Prefix '{apk_name_prefix}' matched release title: '{release_name}'")
+        # In this case, just pick the largest APK as the intended one
+        selected_asset = max(assets, key=lambda x: x['size'])
+    
+    # Priority 2: If prefix matches an APK filename
+    if not selected_asset and apk_name_prefix:
+        matches = [a for a in assets if apk_name_prefix.lower() in a['name'].lower()]
+        if matches:
+            selected_asset = max(matches, key=lambda x: x['size'])
+            print(f"Prefix '{apk_name_prefix}' matched APK filename: '{selected_asset['name']}'")
+
+    # Priority 3: Fallback to largest APK
+    if not selected_asset:
+        selected_asset = max(assets, key=lambda x: x['size'])
+        print(f"No specific prefix match found in title or filename. Selected largest APK: {selected_asset['name']}")
+
+    if selected_asset:
+        print(f"Downloading {selected_asset['name']} ({selected_asset['size']} bytes)...")
+        r = requests.get(selected_asset['browser_download_url'])
+        with open("original.apk", "wb") as f:
+            f.write(r.content)
+        return selected_asset['name'], release_data['tag_name']
+    
     return None, None
 
 def modify_apk(new_display_name):
@@ -156,6 +181,30 @@ def upload_to_release(repo, token, tag, release_name, file_path):
         print(f"Upload failed: {res.text}")
         return False
 
+def get_apk_version(apk_path):
+    print(f"Extracting version from {apk_path}...")
+    try:
+        # We can use apktool's internal aapt or just dump the manifest info
+        # Using 'apktool d' is already done in modify_apk, but we need it BEFORE that to decide.
+        # Let's use 'aapt dump badging' if available, or just a quick decode.
+        result = subprocess.run(["apktool", "d", apk_path, "-o", "temp_version_check", "-f"], check=True, capture_output=True)
+        yml_path = "temp_version_check/apktool.yml"
+        if os.path.exists(yml_path):
+            with open(yml_path, "r") as f:
+                content = f.read()
+                version_match = re.search(r"versionName: ['\"]?([^'\"\n]+)['\"]?", content)
+                if version_match:
+                    version = version_match.group(1)
+                    import shutil
+                    shutil.rmtree("temp_version_check")
+                    return version
+        if os.path.exists("temp_version_check"):
+            import shutil
+            shutil.rmtree("temp_version_check")
+    except Exception as e:
+        print(f"Failed to get version: {e}")
+    return "unknown"
+
 def main():
     if not os.path.exists("apps.json"):
         print("apps.json not found")
@@ -171,63 +220,75 @@ def main():
         print("GITHUB_REPOSITORY or GITHUB_TOKEN not set")
         sys.exit(1)
 
-    # Ensure tools are in PATH or current dir
-    # We will download them in the GHA workflow
+    updated_apps = []
+    any_changes = False
 
     for app in apps:
         repo_url = app['repo_url']
         apk_prefix = app['apk_name_prefix']
         new_name = app['new_display_name']
         release_tag_prefix = app['release_tag_prefix']
+        last_known_version = app.get('latest_version', '')
         
         print(f"\n--- Processing {repo_url} ---")
         latest = get_latest_release(repo_url)
         if not latest:
             print(f"No release found for {repo_url}")
+            updated_apps.append(app)
             continue
         
-        tag = latest['tag_name']
-        target_tag = f"{release_tag_prefix}-{tag}"
-        
-        # Check if release exists in current repo
-        check_url = f"https://api.github.com/repos/{my_repo}/releases/tags/{target_tag}"
-        res = requests.get(check_url, headers={"Authorization": f"token {token}"})
-        if res.status_code == 200:
-            print(f"Release {target_tag} already exists, skipping.")
+        apk_filename, github_tag = download_apk(latest, apk_prefix)
+        if not apk_filename:
+            print("No matching APK found")
+            updated_apps.append(app)
             continue
 
-        apk_filename, version = download_apk(latest, apk_prefix)
-        if apk_filename:
-            # Clean up previous runs
-            if os.path.exists("decompiled"):
-                import shutil
-                shutil.rmtree("decompiled")
-            if os.path.exists("output"):
-                import shutil
-                shutil.rmtree("output")
-            if os.path.exists("original.apk"):
-                os.remove("original.apk")
-            if os.path.exists("modified_unsigned.apk"):
-                os.remove("modified_unsigned.apk")
+        actual_version = get_apk_version("original.apk")
+        print(f"Source Version: {actual_version} (Last known: {last_known_version})")
 
-            # Re-download since I just deleted it for cleanup (oops, logic order)
-            # Actually download_apk creates original.apk. Let's fix the loop.
+        if actual_version == last_known_version and last_known_version != "":
+            print(f"Version {actual_version} already processed. Skipping.")
+            updated_apps.append(app)
+            if os.path.exists("original.apk"): os.remove("original.apk")
+            continue
+
+        # Process new version
+        modified_path = modify_apk(new_name)
+        if modified_path:
+            final_name = f"{release_tag_prefix}_{actual_version}.apk"
+            if os.path.exists(final_name): os.remove(final_name)
+            os.rename(modified_path, final_name)
             
-            # (Re-running download if I moved cleanup)
-            apk_filename, version = download_apk(latest, apk_prefix)
+            target_tag = f"{release_tag_prefix}-{actual_version}"
+            if upload_to_release(my_repo, token, target_tag, f"{release_tag_prefix} {actual_version}", final_name):
+                app['latest_version'] = actual_version
+                any_changes = True
+        
+        updated_apps.append(app)
+        
+        # Cleanup
+        for path in ["decompiled", "output", "original.apk", "modified_unsigned.apk"]:
+            if os.path.exists(path):
+                if os.path.isdir(path):
+                    import shutil
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
 
-            modified_path = modify_apk(new_name)
-            if modified_path:
-                final_name = f"{release_tag_prefix}_{version}.apk"
-                if os.path.exists(final_name): os.remove(final_name)
-                os.rename(modified_path, final_name)
-                print(f"Successfully created {final_name}")
-                
-                upload_to_release(my_repo, token, target_tag, f"{release_tag_prefix} {version}", final_name)
-            else:
-                print("Failed to modify APK")
-        else:
-            print("No matching APK found in latest release")
+    if any_changes:
+        with open("apps.json", "w") as f:
+            json.dump(updated_apps, f, indent=2)
+        print("\nUpdated apps.json with new versions.")
+        
+        # In GHA, we need to commit these changes back to the repo
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
+            subprocess.run(["git", "config", "user.email", "github-actions@github.com"], check=True)
+            subprocess.run(["git", "add", "apps.json"], check=True)
+            subprocess.run(["git", "commit", "-m", "Update apps.json with latest versions [skip ci]"], check=True)
+            subprocess.run(["git", "push"], check=True)
+    else:
+        print("\nNo new versions to process.")
 
 if __name__ == "__main__":
     main()
