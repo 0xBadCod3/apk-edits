@@ -4,229 +4,202 @@ import requests
 import subprocess
 import re
 import sys
+import shutil
+import logging
 
-def get_latest_release(repo_url):
-    # Convert https://github.com/owner/repo to owner/repo
-    repo_path = repo_url.replace("https://github.com/", "").strip("/")
-    api_url = f"https://api.github.com/repos/{repo_path}/releases/latest"
-    response = requests.get(api_url)
-    if response.status_code == 200:
-        return response.json()
-    return None
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
-def download_apk(release_data, apk_name_prefix):
-    assets = [a for a in release_data.get('assets', []) if a['name'].endswith('.apk')]
-    if not assets:
-        return None, None
-    
-    selected_asset = None
-    release_name = release_data.get('name', '')
-    
-    # Priority 1: If prefix matches the Release Name (Title)
-    if apk_name_prefix and release_name and apk_name_prefix.lower() in release_name.lower():
-        print(f"Prefix '{apk_name_prefix}' matched release title: '{release_name}'")
-        # In this case, just pick the largest APK as the intended one
-        selected_asset = max(assets, key=lambda x: x['size'])
-    
-    # Priority 2: If prefix matches an APK filename
-    if not selected_asset and apk_name_prefix:
-        matches = [a for a in assets if apk_name_prefix.lower() in a['name'].lower()]
-        if matches:
-            selected_asset = max(matches, key=lambda x: x['size'])
-            print(f"Prefix '{apk_name_prefix}' matched APK filename: '{selected_asset['name']}'")
+class APKProcessor:
+    def __init__(self, repo, token):
+        self.my_repo = repo
+        self.token = token
+        self.headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
 
-    # Priority 3: Fallback to largest APK
-    if not selected_asset:
-        selected_asset = max(assets, key=lambda x: x['size'])
-        print(f"No specific prefix match found in title or filename. Selected largest APK: {selected_asset['name']}")
+    def get_latest_release(self, repo_url):
+        repo_path = repo_url.replace("https://github.com/", "").strip("/")
+        api_url = f"https://api.github.com/repos/{repo_path}/releases/latest"
+        try:
+            response = requests.get(api_url, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch latest release for {repo_url}: {e}")
+            return None
 
-    if selected_asset:
-        print(f"Downloading {selected_asset['name']} ({selected_asset['size']} bytes)...")
-        r = requests.get(selected_asset['browser_download_url'])
-        with open("original.apk", "wb") as f:
-            f.write(r.content)
-        return selected_asset['name'], release_data['tag_name']
-    
-    return None, None
-
-def modify_apk(new_display_name, original_display_name_hint):
-    print(f"Modifying APK label from '{original_display_name_hint}' to: {new_display_name}")
-    
-    # 1. Decompile with APKEditor
-    try:
-        subprocess.run(["java", "-jar", "APKEditor.jar", "d", "-i", "original.apk", "-o", "decompiled"], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Decompile failed: {e}")
-        return None
-    
-    # 2. Update Label
-    manifest_path = None
-    for root, dirs, files in os.walk("decompiled"):
-        if "AndroidManifest.xml" in files:
-            manifest_path = os.path.join(root, "AndroidManifest.xml")
-            break
-            
-    if manifest_path:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = f.read()
+    def download_apk(self, release_data, apk_name_prefix):
+        assets = [a for a in release_data.get('assets', []) if a['name'].endswith('.apk')]
+        if not assets:
+            return None, None
         
-        app_tag_match = re.search(r'<application[^>]+android:label="([^"]+)"', manifest)
-        if app_tag_match:
-            label_ref = app_tag_match.group(1)
-            print(f"Found existing label reference in manifest: {label_ref}")
+        selected_asset = None
+        release_title = release_data.get('name', '')
+        
+        # Matching logic
+        if apk_name_prefix:
+            # Check Title
+            if release_title and apk_name_prefix.lower() in release_title.lower():
+                logger.info(f"Matched prefix '{apk_name_prefix}' in release title")
+                selected_asset = max(assets, key=lambda x: x['size'])
+            # Check Filenames
+            if not selected_asset:
+                matches = [a for a in assets if apk_name_prefix.lower() in a['name'].lower()]
+                if matches:
+                    selected_asset = max(matches, key=lambda x: x['size'])
+                    logger.info(f"Matched prefix '{apk_name_prefix}' in filename: {selected_asset['name']}")
+
+        # Fallback to largest
+        if not selected_asset:
+            selected_asset = max(assets, key=lambda x: x['size'])
+            logger.info(f"Using fallback: selected largest APK {selected_asset['name']}")
+
+        try:
+            logger.info(f"Downloading {selected_asset['name']}...")
+            r = requests.get(selected_asset['browser_download_url'], stream=True, timeout=60)
+            r.raise_for_status()
+            with open("original.apk", "wb") as f:
+                shutil.copyfileobj(r.raw, f)
+            return selected_asset['name'], release_data['tag_name']
+        except Exception as e:
+            logger.error(f"Download failed: {e}")
+            return None, None
+
+    def get_apk_version(self, apk_path):
+        logger.info("Extracting APK version...")
+        temp_dir = "temp_ver"
+        try:
+            subprocess.run(["java", "-jar", "apktool.jar", "d", apk_path, "-o", temp_dir, "-f"], 
+                           check=True, capture_output=True)
+            yml_path = os.path.join(temp_dir, "apktool.yml")
+            if os.path.exists(yml_path):
+                with open(yml_path, "r") as f:
+                    match = re.search(r"versionName: ['\"]?([^'\"\n]+)['\"]?", f.read())
+                    if match:
+                        return match.group(1)
+        except Exception as e:
+            logger.error(f"Version extraction failed: {e}")
+        finally:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+        return "unknown"
+
+    def modify_apk(self, new_name, old_name_hint):
+        logger.info(f"Modifying label: {old_name_hint} -> {new_name}")
+        decompiled_dir = "decompiled"
+        try:
+            # Decode
+            subprocess.run(["java", "-jar", "APKEditor.jar", "d", "-i", "original.apk", "-o", decompiled_dir], check=True)
             
-            # Strategy: Search all strings.xml for either the resource name OR the literal hint
-            found_and_replaced = False
+            # Find and Replace
+            manifest_path = self._find_file(decompiled_dir, "AndroidManifest.xml")
+            if not manifest_path:
+                return None
+
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = f.read()
             
-            for root, dirs, files in os.walk("decompiled"):
+            label_match = re.search(r'android:label="([^"]+)"', manifest)
+            if not label_match:
+                return None
+                
+            label_ref = label_match.group(1)
+            found_replaced = False
+
+            # Scan strings.xml files
+            for root, _, files in os.walk(decompiled_dir):
                 if "strings.xml" in files:
-                    s_path = os.path.join(root, "strings.xml")
-                    with open(s_path, "r", encoding="utf-8") as f:
-                        s_content = f.read()
+                    path = os.path.join(root, "strings.xml")
+                    with open(path, "r", encoding="utf-8") as f:
+                        content = f.read()
                     
-                    new_s_content = s_content
-                    
-                    # Case A: Label is a resource reference (@string/...)
+                    new_content = content
                     if label_ref.startswith("@string/"):
-                        string_name = label_ref.split("/")[-1]
-                        if f'name="{string_name}"' in s_content:
-                            new_s_content = re.sub(
-                                f'<string name="{string_name}">.*?</string>',
-                                f'<string name="{string_name}">{new_display_name}</string>',
-                                new_s_content,
-                                flags=re.DOTALL
-                            )
-                            found_and_replaced = True
-
-                    # Case B: The original_display_name_hint exists as a value in strings.xml
-                    if original_display_name_hint and f'>{original_display_name_hint}</string>' in s_content:
-                        new_s_content = re.sub(
-                            f'<string([^>]*)>{re.escape(original_display_name_hint)}</string>',
-                            f'<string\\1>{new_display_name}</string>',
-                            new_s_content
-                        )
-                        found_and_replaced = True
+                        s_name = label_ref.split("/")[-1]
+                        new_content = re.sub(f'<string name="{s_name}">.*?</string>', 
+                                            f'<string name="{s_name}">{new_name}</string>', 
+                                            new_content, flags=re.DOTALL)
                     
-                    if new_s_content != s_content:
-                        with open(s_path, "w", encoding="utf-8") as f:
-                            f.write(new_s_content)
-                        print(f"Updated label in {s_path}")
+                    if old_name_hint in content:
+                        new_content = re.sub(f'<string([^>]*)>{re.escape(old_name_hint)}</string>',
+                                            f'<string\\1>{new_name}</string>', new_content)
+                    
+                    if new_content != content:
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(new_content)
+                        found_replaced = True
 
-            if not found_and_replaced:
-                # Case C: Literal replacement in AndroidManifest.xml if it's not a resource
-                if not label_ref.startswith("@string/"):
-                    new_manifest = manifest.replace(f'android:label="{label_ref}"', f'android:label="{new_display_name}"', 1)
-                    with open(manifest_path, "w", encoding="utf-8") as f:
-                        f.write(new_manifest)
-                    print("Updated literal label in manifest")
-                    found_and_replaced = True
-                else:
-                    print(f"Warning: Could not find a string matching '{original_display_name_hint}' or resource '{label_ref}'")
+            # Literal manifest fallback
+            if not found_replaced and not label_ref.startswith("@string/"):
+                with open(manifest_path, "w", encoding="utf-8") as f:
+                    f.write(manifest.replace(f'android:label="{label_ref}"', f'android:label="{new_name}"', 1))
+                found_replaced = True
 
-    # 3. Build with APKEditor
-    try:
-        subprocess.run(["java", "-jar", "APKEditor.jar", "b", "-i", "decompiled", "-o", "modified_unsigned.apk"], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Build failed: {e}")
+            # Build and Sign
+            subprocess.run(["java", "-jar", "APKEditor.jar", "b", "-i", decompiled_dir, "-o", "unsigned.apk"], check=True)
+            subprocess.run(["java", "-jar", "uber-apk-signer.jar", "--apks", "unsigned.apk", "--out", "output"], check=True)
+            
+            for f in os.listdir("output"):
+                if f.endswith(".apk"):
+                    return os.path.join("output", f)
+        except Exception as e:
+            logger.error(f"Modification failed: {e}")
         return None
-    
-    # 4. Sign with uber-apk-signer
-    try:
-        subprocess.run([
-            "java", "-jar", "uber-apk-signer.jar", 
-            "--apks", "modified_unsigned.apk", 
-            "--out", "output"
-        ], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Signing failed: {e}")
-        return None
-    
-    if os.path.exists("output"):
-        for f in os.listdir("output"):
-            if f.endswith(".apk"):
-                return os.path.join("output", f)
-    return None
 
-def upload_to_release(repo, token, tag, release_name, file_path, original_repo_url):
-    print(f"Creating/Updating release {tag}...")
-    create_url = f"https://api.github.com/repos/{repo}/releases"
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    
-    body = f"Original Repo: [{original_repo_url}]({original_repo_url})"
-    
-    data = {
-        "tag_name": tag,
-        "name": release_name,
-        "body": body,
-        "draft": False,
-        "prerelease": False,
-        "make_latest": "false"
-    }
-    res = requests.post(create_url, headers=headers, json=data)
-    
-    if res.status_code != 201:
-        get_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
-        res = requests.get(get_url, headers=headers)
-        if res.status_code != 200:
-            print(f"Failed to find or create release: {res.text}")
+    def upload_to_release(self, tag, file_path, source_url):
+        logger.info(f"Uploading to release: {tag}")
+        try:
+            # Create/Get Release
+            data = {"tag_name": tag, "name": tag, "body": f"Original Repo: [Link]({source_url})", 
+                    "draft": False, "prerelease": False, "make_latest": "false"}
+            res = requests.post(f"https://api.github.com/repos/{self.my_repo}/releases", 
+                                headers=self.headers, json=data)
+            
+            if res.status_code != 201:
+                res = requests.get(f"https://api.github.com/repos/{self.my_repo}/releases/tags/{tag}", headers=self.headers)
+                res.raise_for_status()
+
+            release_data = res.json()
+            upload_url = release_data['upload_url'].split('{')[0]
+            
+            # Clean existing APKs
+            for asset in release_data.get('assets', []):
+                if asset['name'].endswith('.apk'):
+                    requests.delete(f"https://api.github.com/repos/{self.my_repo}/releases/assets/{asset['id']}", 
+                                    headers=self.headers)
+
+            # Upload
+            filename = os.path.basename(file_path)
+            with open(file_path, "rb") as f:
+                r = requests.post(f"{upload_url}?name={filename}", headers=self.headers, 
+                                  data=f, headers={"Content-Type": "application/vnd.android.package-archive"})
+                return r.status_code == 201
+        except Exception as e:
+            logger.error(f"Upload failed: {e}")
             return False
-    
-    release_data = res.json()
-    release_id = release_data['id']
-    upload_url_template = release_data['upload_url']
-    upload_url = upload_url_template.split('{')[0]
-    
-    filename = os.path.basename(file_path)
-    
-    # Delete ALL existing APK assets (since we want only the latest version to exist)
-    for asset in release_data.get('assets', []):
-        if asset['name'].endswith('.apk'):
-            print(f"Deleting old version: {asset['name']}...")
-            del_url = f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}"
-            requests.delete(del_url, headers=headers)
 
-    upload_url = f"{upload_url}?name={filename}"
+    def _find_file(self, start_dir, target_name):
+        for root, _, files in os.walk(start_dir):
+            if target_name in files:
+                return os.path.join(root, target_name)
+        return None
 
-    
-    print(f"Uploading {filename} to release...")
-    with open(file_path, "rb") as f:
-        headers["Content-Type"] = "application/vnd.android.package-archive"
-        res = requests.post(upload_url, headers=headers, data=f)
-    
-    if res.status_code == 201:
-        print("Upload successful")
-        return True
-    else:
-        print(f"Upload failed: {res.text}")
-        return False
-
-def get_apk_version(apk_path):
-    print(f"Extracting version from {apk_path}...")
-    try:
-        result = subprocess.run(["java", "-jar", "apktool.jar", "d", apk_path, "-o", "temp_version_check", "-f"], check=True, capture_output=True)
-        yml_path = "temp_version_check/apktool.yml"
-        if os.path.exists(yml_path):
-            with open(yml_path, "r") as f:
-                content = f.read()
-                version_match = re.search(r"versionName: ['\"]?([^'\"\n]+)['\"]?", content)
-                if version_match:
-                    version = version_match.group(1)
-                    import shutil
-                    shutil.rmtree("temp_version_check")
-                    return version
-        if os.path.exists("temp_version_check"):
-            import shutil
-            shutil.rmtree("temp_version_check")
-    except Exception as e:
-        print(f"Failed to get version: {e}")
-    return "unknown"
+    def cleanup(self):
+        for path in ["decompiled", "output", "original.apk", "unsigned.apk", "temp_ver"]:
+            if os.path.exists(path):
+                if os.path.isdir(path): shutil.rmtree(path)
+                else: os.remove(path)
 
 def main():
     if not os.path.exists("apps.json"):
-        print("apps.json not found")
+        logger.error("apps.json not found")
         return
 
     with open("apps.json", "r") as f:
@@ -234,82 +207,48 @@ def main():
 
     my_repo = os.environ.get("GITHUB_REPOSITORY")
     token = os.environ.get("GITHUB_TOKEN")
-
     if not my_repo or not token:
-        print("GITHUB_REPOSITORY or GITHUB_TOKEN not set")
+        logger.error("Environment variables missing")
         sys.exit(1)
 
-    updated_apps = []
+    processor = APKProcessor(my_repo, token)
     any_changes = False
 
     for app in apps:
-        repo_url = app['repo_url']
-        apk_prefix = app['apk_name_prefix']
-        new_name = app['new_display_name']
-        release_tag_prefix = app['release_tag_prefix']
-        last_known_version = app.get('latest_version', '')
+        logger.info(f"--- Processing {app['repo_url']} ---")
+        processor.cleanup()
         
-        print(f"\n--- Processing {repo_url} ---")
-        latest = get_latest_release(repo_url)
-        if not latest:
-            print(f"No release found for {repo_url}")
-            updated_apps.append(app)
-            continue
-        
-        apk_filename, github_tag = download_apk(latest, apk_prefix)
-        if not apk_filename:
-            print("No matching APK found")
-            updated_apps.append(app)
+        latest = processor.get_latest_release(app['repo_url'])
+        if not latest: continue
+
+        apk_file, _ = processor.download_apk(latest, app['apk_name_prefix'])
+        if not apk_file: continue
+
+        ver = processor.get_apk_version("original.apk")
+        if ver == app.get('latest_version'):
+            logger.info(f"Version {ver} is up to date.")
             continue
 
-        actual_version = get_apk_version("original.apk")
-        print(f"Source Version: {actual_version} (Last known: {last_known_version})")
-
-        if actual_version == last_known_version and last_known_version != "":
-            print(f"Version {actual_version} already processed. Skipping.")
-            updated_apps.append(app)
-            if os.path.exists("original.apk"): os.remove("original.apk")
-            continue
-
-        # Process new version
-        modified_path = modify_apk(new_name, apk_prefix)
-        if modified_path:
-            final_name = f"{release_tag_prefix}_{actual_version}.apk"
-            if os.path.exists(final_name): os.remove(final_name)
-            os.rename(modified_path, final_name)
-            
-            # Static tag and name as requested
-            target_tag = release_tag_prefix
-            release_display_name = release_tag_prefix
-            
-            if upload_to_release(my_repo, token, target_tag, release_display_name, final_name, repo_url):
-                app['latest_version'] = actual_version
+        mod_apk = processor.modify_apk(app['new_display_name'], app['apk_name_prefix'])
+        if mod_apk:
+            final_name = f"{app['release_tag_prefix']}_{ver}.apk"
+            os.rename(mod_apk, final_name)
+            if processor.upload_to_release(app['release_tag_prefix'], final_name, app['repo_url']):
+                app['latest_version'] = ver
                 any_changes = True
-        
-        updated_apps.append(app)
-        
-        # Cleanup
-        for path in ["decompiled", "output", "original.apk", "modified_unsigned.apk"]:
-            if os.path.exists(path):
-                if os.path.isdir(path):
-                    import shutil
-                    shutil.rmtree(path)
-                else:
-                    os.remove(path)
+                os.remove(final_name)
 
     if any_changes:
         with open("apps.json", "w") as f:
-            json.dump(updated_apps, f, indent=2)
-        print("\nUpdated apps.json with new versions.")
-        
+            json.dump(apps, f, indent=2)
         if os.environ.get("GITHUB_ACTIONS") == "true":
             subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
             subprocess.run(["git", "config", "user.email", "github-actions@github.com"], check=True)
             subprocess.run(["git", "add", "apps.json"], check=True)
-            subprocess.run(["git", "commit", "-m", "Update apps.json with latest versions [skip ci]"], check=True)
+            subprocess.run(["git", "commit", "-m", "chore: update app versions [skip ci]"], check=True)
             subprocess.run(["git", "push"], check=True)
-    else:
-        print("\nNo new versions to process.")
+    
+    processor.cleanup()
 
 if __name__ == "__main__":
     main()
