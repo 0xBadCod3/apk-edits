@@ -49,78 +49,90 @@ def download_apk(release_data, apk_name_prefix):
     
     return None, None
 
-def modify_apk(new_display_name):
-    print(f"Modifying APK label to: {new_display_name}")
+def modify_apk(new_display_name, original_display_name_hint):
+    print(f"Modifying APK label from '{original_display_name_hint}' to: {new_display_name}")
     
-    # REAndroid APKEditor can rename the app label using the 'refactor' command or by editing resources
-    # However, for the most robust 'effortless' experience like ApkTool M, 
-    # we can use the 'refactor' command if it supports renaming, 
-    # or use it to decompile/rebuild if it's more reliable.
-    
-    # Actually, APKEditor has a 'refactor --rename-app' feature in some versions, 
-    # but let's use its robust resource handling.
-    # An even better tool specifically for renaming is 'APKEditor's 'edit' command or similar.
-    
-    # Let's try the REAndroid APKEditor 'm' (modify) or 'd' (decode) approach.
-    # Most reliable: Decompile, change strings.xml (which APKEditor handles better), Rebuild.
-    
-    # 1. Decompile with APKEditor (it's often faster and more robust with resources)
+    # 1. Decompile with APKEditor
     try:
-        # APKEditor d -i original.apk -o decompiled
         subprocess.run(["java", "-jar", "APKEditor.jar", "d", "-i", "original.apk", "-o", "decompiled"], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Decompile failed: {e}")
         return None
     
     # 2. Update Label
-    # APKEditor keeps resources in a more accessible way.
-    # We still need to find the label.
-    manifest_path = "decompiled/AndroidManifest.xml"
-    if os.path.exists(manifest_path):
+    manifest_path = None
+    for root, dirs, files in os.walk("decompiled"):
+        if "AndroidManifest.xml" in files:
+            manifest_path = os.path.join(root, "AndroidManifest.xml")
+            break
+            
+    if manifest_path:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = f.read()
         
         app_tag_match = re.search(r'<application[^>]+android:label="([^"]+)"', manifest)
         if app_tag_match:
-            label_val = app_tag_match.group(1)
-            if label_val.startswith("@string/"):
-                string_name = label_val.split("/")[-1]
-                # APKEditor decodes resources into res/values/strings.xml or similar
-                # We'll search for all strings.xml files to be sure
-                found_string = False
-                for root, dirs, files in os.walk("decompiled/res"):
-                    if "strings.xml" in files:
-                        s_path = os.path.join(root, "strings.xml")
-                        with open(s_path, "r", encoding="utf-8") as f:
-                            s_content = f.read()
+            label_ref = app_tag_match.group(1)
+            print(f"Found existing label reference in manifest: {label_ref}")
+            
+            # Strategy: Search all strings.xml for either the resource name OR the literal hint
+            found_and_replaced = False
+            
+            for root, dirs, files in os.walk("decompiled"):
+                if "strings.xml" in files:
+                    s_path = os.path.join(root, "strings.xml")
+                    with open(s_path, "r", encoding="utf-8") as f:
+                        s_content = f.read()
+                    
+                    new_s_content = s_content
+                    
+                    # Case A: Label is a resource reference (@string/...)
+                    if label_ref.startswith("@string/"):
+                        string_name = label_ref.split("/")[-1]
                         if f'name="{string_name}"' in s_content:
                             new_s_content = re.sub(
                                 f'<string name="{string_name}">.*?</string>',
                                 f'<string name="{string_name}">{new_display_name}</string>',
-                                s_content,
+                                new_s_content,
                                 flags=re.DOTALL
                             )
-                            with open(s_path, "w", encoding="utf-8") as f:
-                                f.write(new_s_content)
-                            print(f"Updated {string_name} in {s_path}")
-                            found_string = True
-                if not found_string:
-                    print(f"Could not find string resource {string_name}")
-            else:
-                new_manifest = manifest.replace(f'android:label="{label_val}"', f'android:label="{new_display_name}"', 1)
-                with open(manifest_path, "w", encoding="utf-8") as f:
-                    f.write(new_manifest)
-                print("Updated literal label in manifest")
+                            found_and_replaced = True
+
+                    # Case B: The original_display_name_hint exists as a value in strings.xml
+                    # This handles cases where the manifest points to a string we didn't catch, 
+                    # or multiple strings have the same value.
+                    if original_display_name_hint and f'>{original_display_name_hint}</string>' in s_content:
+                        new_s_content = re.sub(
+                            f'<string([^>]*)>{re.escape(original_display_name_hint)}</string>',
+                            f'<string\\1>{new_display_name}</string>',
+                            new_s_content
+                        )
+                        found_and_replaced = True
+                    
+                    if new_s_content != s_content:
+                        with open(s_path, "w", encoding="utf-8") as f:
+                            f.write(new_s_content)
+                        print(f"Updated label in {s_path}")
+
+            if not found_and_replaced:
+                # Case C: Literal replacement in AndroidManifest.xml if it's not a resource
+                if not label_ref.startswith("@string/"):
+                    new_manifest = manifest.replace(f'android:label="{label_ref}"', f'android:label="{new_display_name}"', 1)
+                    with open(manifest_path, "w", encoding="utf-8") as f:
+                        f.write(new_manifest)
+                    print("Updated literal label in manifest")
+                    found_and_replaced = True
+                else:
+                    print(f"Warning: Could not find a string matching '{original_display_name_hint}' or resource '{label_ref}'")
 
     # 3. Build with APKEditor
     try:
-        # APKEditor b -i decompiled -o modified_unsigned.apk
         subprocess.run(["java", "-jar", "APKEditor.jar", "b", "-i", "decompiled", "-o", "modified_unsigned.apk"], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Build failed: {e}")
         return None
     
-    # 4. Sign with uber-apk-signer (the 'debug key' part)
+    # 4. Sign with uber-apk-signer
     try:
         subprocess.run([
             "java", "-jar", "uber-apk-signer.jar", 
@@ -184,10 +196,8 @@ def upload_to_release(repo, token, tag, release_name, file_path):
 def get_apk_version(apk_path):
     print(f"Extracting version from {apk_path}...")
     try:
-        # We can use apktool's internal aapt or just dump the manifest info
-        # Using 'apktool d' is already done in modify_apk, but we need it BEFORE that to decide.
-        # Let's use 'aapt dump badging' if available, or just a quick decode.
-        result = subprocess.run(["apktool", "d", apk_path, "-o", "temp_version_check", "-f"], check=True, capture_output=True)
+        # Use java -jar explicitly to avoid exec format errors with wrappers
+        result = subprocess.run(["java", "-jar", "apktool.jar", "d", apk_path, "-o", "temp_version_check", "-f"], check=True, capture_output=True)
         yml_path = "temp_version_check/apktool.yml"
         if os.path.exists(yml_path):
             with open(yml_path, "r") as f:
@@ -253,7 +263,7 @@ def main():
             continue
 
         # Process new version
-        modified_path = modify_apk(new_name)
+        modified_path = modify_apk(new_name, apk_prefix)
         if modified_path:
             final_name = f"{release_tag_prefix}_{actual_version}.apk"
             if os.path.exists(final_name): os.remove(final_name)

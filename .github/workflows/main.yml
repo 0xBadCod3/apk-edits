@@ -5,6 +5,9 @@ on:
     - cron: '0 */6 * * *' # Every 6 hours
   workflow_dispatch: # Manual run
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -49,7 +52,8 @@ jobs:
           wget "$APKEDITOR_URL" -O APKEditor.jar
 
           # Create a wrapper for apktool to be used as 'apktool' in the script
-          echo 'java -jar "$GITHUB_WORKSPACE/apktool.jar" "$@"' > apktool
+          echo '#!/bin/bash' > apktool
+          echo 'java -jar "$GITHUB_WORKSPACE/apktool.jar" "$@"' >> apktool
           chmod +x apktool
           sudo mv apktool /usr/local/bin/apktool
 
