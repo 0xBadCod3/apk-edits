@@ -4,13 +4,42 @@
     "apk_name_prefix": "Retro Music",
     "new_display_name": "Music",
     "release_tag_prefix": "RetroMusic",
-    "latest_version": "6.6.0"
+    "latest_version": ""
+  },
+  {
+    "repo_url": "https://github.com/TeamNewPipe/NewPipe-refactor-nightly",
+    "apk_name_prefix": "NewPipe Refactor",
+    "new_display_name": "NewPipe",
+    "release_tag_prefix": "NewPipeRF",
+    "latest_version": ""
   },
   {
     "repo_url": "https://github.com/markusfisch/BinaryEye",
     "apk_name_prefix": "Binary Eye",
     "new_display_name": "Scanner",
     "release_tag_prefix": "BinaryEye",
-    "latest_version": "1.72.2"
+    "latest_version": ""
+  },
+  {
+    "source_type": "scrape",
+    "scrape_url": "https://maximoff.su/apktool/?lang=en",
+    "apk_name_prefix": "Apktool_M",
+    "new_display_name": "Apktool M",
+    "release_tag_prefix": "ApktoolM",
+    "latest_version": ""
+  },
+  {
+    "source_type": "scrape",
+    "scrape_url": "https://mt2.cn/download/",
+    "apk_name_prefix": "MT_Manager",
+    "new_display_name": "MT Manager",
+    "release_tag_prefix": "MT-Manager",
+    "extra_assets": [
+      {
+        "asset_suffix": "clone",
+        "asset_name_prefix": "MT_Manager_clone"
+      }
+    ],
+    "latest_version": ""
   }
 ]
