@@ -16,23 +16,41 @@ This repository automates the process of downloading APKs from other GitHub repo
 
 ## Configuration
 
-Add your apps to `apps.json`:
+The `apps.json` file contains a list of applications to be processed.
 
+### Field Definitions
+
+- `repo_url`: (GitHub only) The source repository URL.
+- `source_type`: Either `"github"` (default) or `"scrape"`.
+- `scrape_url`: (Scrape only) The website URL to monitor for updates.
+- `apk_name_prefix`: Text used to identify the correct APK from the source.
+- `new_display_name`: The new app label (name) to be applied to the APK.
+- `release_tag_prefix`: The tag name used for releases in *this* repository.
+- `latest_version`: Automatically updated by the script when a new version is released.
+- `extra_assets`: (Optional) Additional assets to download (e.g., clones for MT Manager).
+
+### Examples
+
+**GitHub Source:**
 ```json
-[
-  {
-    "repo_url": "https://github.com/owner/repo",
-    "apk_name_prefix": "app-release",
-    "new_display_name": "My Modified App",
-    "release_tag_prefix": "OriginalAppName"
-  }
-]
+{
+  "repo_url": "https://github.com/RetroMusicPlayer/RetroMusicPlayer",
+  "apk_name_prefix": "Retro Music",
+  "new_display_name": "Music",
+  "release_tag_prefix": "RetroMusic"
+}
 ```
 
-- `repo_url`: The GitHub URL of the source repository.
-- `apk_name_prefix`: The prefix of the APK file in the source release (e.g., `app-arm64-v8a`).
-- `new_display_name`: The name you want to see after installation.
-- `release_tag_prefix`: The name used for the release tag in this repository.
+**Scrape Source:**
+```json
+{
+  "source_type": "scrape",
+  "scrape_url": "https://mt2.cn/download/",
+  "apk_name_prefix": "MT_Manager",
+  "new_display_name": "MT Manager",
+  "release_tag_prefix": "MT-Manager"
+}
+```
 
 ## Requirements
 
