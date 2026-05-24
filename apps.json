@@ -21,6 +21,13 @@
     "latest_version": "1.72.2"
   },
   {
+    "repo_url": "https://github.com/PranshulGG/WeatherMaster",
+    "apk_name_prefix": "Weather Master",
+    "new_display_name": "Weather",
+    "release_tag_prefix": "WeatherMaster",
+    "latest_version": ""
+  },
+  {
     "source_type": "scrape",
     "scrape_url": "https://maximoff.su/apktool/?lang=en",
     "apk_name_prefix": "Apktool_M",
