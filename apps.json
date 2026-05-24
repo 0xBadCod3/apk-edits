@@ -25,7 +25,7 @@
     "apk_name_prefix": "Weather Master",
     "new_display_name": "Weather",
     "release_tag_prefix": "WeatherMaster",
-    "latest_version": ""
+    "latest_version": "2.7.1"
   },
   {
     "source_type": "scrape",
