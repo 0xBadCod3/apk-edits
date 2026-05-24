@@ -5,6 +5,7 @@ import re
 import sys
 import shutil
 import logging
+import fnmatch
 from typing import Optional, Dict, Tuple, List
 from curl_cffi.requests import Session
 
@@ -254,24 +255,40 @@ class APKProcessor:
             logger.error(f"Error fetching release for {repo_url}: {e}")
             return None
 
-    def download_apk(self, release_data: Dict, apk_name_prefix: str) -> Tuple[Optional[str], Optional[str]]:
+    def download_apk(self, release_data: Dict, original_asset_name: str) -> Tuple[Optional[str], Optional[str]]:
         assets = [a for a in release_data.get("assets", []) if a["name"].endswith(".apk")]
         if not assets:
             logger.warning("No APK assets found in release.")
             return None, None
 
-        prefix = apk_name_prefix.lower()
-        release_title = release_data.get("name", "").lower()
+        pattern = original_asset_name.lower() if original_asset_name else ""
+        has_wildcards = "*" in pattern or "?" in pattern
 
-        if prefix and prefix in release_title:
-            selected = max(assets, key=lambda x: x["size"])
-            logger.info(f"Prefix '{apk_name_prefix}' matched release title.")
-        elif prefix and (matches := [a for a in assets if prefix in a["name"].lower()]):
+        def is_match(text: str, pat: str) -> bool:
+            text = text.lower()
+            if has_wildcards:
+                return fnmatch.fnmatch(text, pat)
+            return pat in text
+
+        # Try matching against filenames
+        matches = [a for a in assets if is_match(a["name"], pattern)] if pattern else []
+
+        if matches:
             selected = max(matches, key=lambda x: x["size"])
-            logger.info(f"Prefix '{apk_name_prefix}' matched filename: {selected['name']}")
-        else:
+            logger.info(f"Matched asset by filename pattern: {selected['name']}")
+
+        # Fallback: Match against release title
+        elif pattern and not has_wildcards and is_match(release_data.get("name", ""), pattern):
             selected = max(assets, key=lambda x: x["size"])
-            logger.info(f"Fallback: selecting largest asset {selected['name']}")
+            logger.info(f"Matched release title prefix: '{original_asset_name}'")
+
+        # Final Fallback: If no pattern, pick largest
+        else:
+            if pattern:
+                logger.error(f"No assets in latest release matched pattern: {original_asset_name}")
+                return None, None
+            selected = max(assets, key=lambda x: x["size"])
+            logger.info(f"No pattern provided; selecting largest asset: {selected['name']}")
 
         try:
             logger.info(f"Downloading {selected['name']} ({selected['size']} bytes)...")
@@ -477,7 +494,7 @@ def process_github_app(processor: APKProcessor, app: Dict) -> bool:
     if not latest_rel:
         return False
 
-    apk_name, _ = processor.download_apk(latest_rel, app["apk_name_prefix"])
+    apk_name, _ = processor.download_apk(latest_rel, app.get("original_asset_name"))
     if not apk_name:
         return False
 
@@ -487,7 +504,7 @@ def process_github_app(processor: APKProcessor, app: Dict) -> bool:
         return False
 
     logger.info(f"New version detected: {current_ver} (Previous: {app.get('latest_version', 'None')})")
-    mod_path = processor.modify_apk(app["new_display_name"], app["apk_name_prefix"])
+    mod_path = processor.modify_apk(app["new_display_name"], app.get("original_asset_name"))
     if not mod_path:
         return False
 

@@ -23,7 +23,7 @@ The `apps.json` file contains a list of applications to be processed.
 - `repo_url`: (GitHub only) The source repository URL.
 - `source_type`: Either `"github"` (default) or `"scrape"`.
 - `scrape_url`: (Scrape only) The website URL to monitor for updates.
-- `apk_name_prefix`: Text used to identify the correct APK from the source.
+- `original_asset_name`: Text used to identify the correct APK from the source.
 - `new_display_name`: The new app label (name) to be applied to the APK.
 - `release_tag_prefix`: The tag name used for releases in *this* repository.
 - `latest_version`: Automatically updated by the script when a new version is released.
@@ -35,7 +35,7 @@ The `apps.json` file contains a list of applications to be processed.
 ```json
 {
   "repo_url": "https://github.com/RetroMusicPlayer/RetroMusicPlayer",
-  "apk_name_prefix": "Retro Music",
+  "original_asset_name": "app-fdroid*",
   "new_display_name": "Music",
   "release_tag_prefix": "RetroMusic"
 }
@@ -46,7 +46,7 @@ The `apps.json` file contains a list of applications to be processed.
 {
   "source_type": "scrape",
   "scrape_url": "https://mt2.cn/download/",
-  "apk_name_prefix": "MT_Manager",
+  "original_asset_name": "MT_Manager",
   "new_display_name": "MT Manager",
   "release_tag_prefix": "MT-Manager"
 }
