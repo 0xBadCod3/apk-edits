@@ -32,7 +32,7 @@
     "original_asset_name": "voicerecorder*foss*",
     "new_display_name": "Recorder",
     "release_tag_prefix": "VoiceRecorder",
-    "latest_version": ""
+    "latest_version": "1.7.1"
   },
   {
     "source_type": "scrape",
@@ -54,6 +54,6 @@
         "asset_name_prefix": "MT_Manager_clone"
       }
     ],
-    "latest_version": "2.26.4"
+    "latest_version": "2.26.5"
   }
 ]
