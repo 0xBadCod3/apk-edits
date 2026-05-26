@@ -28,6 +28,13 @@
     "latest_version": "2.7.1"
   },
   {
+    "repo_url": "https://github.com/FossifyOrg/Voice-Recorder",
+    "original_asset_name": "voicerecorder*foss*",
+    "new_display_name": "Recorder",
+    "release_tag_prefix": "VoiceRecorder",
+    "latest_version": ""
+  },
+  {
     "source_type": "scrape",
     "scrape_url": "https://maximoff.su/apktool/?lang=en",
     "original_asset_name": "Apktool_M",
