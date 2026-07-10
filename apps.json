@@ -11,7 +11,7 @@
     "original_asset_name": "NewPipe*nightly*",
     "new_display_name": "NewPipe",
     "release_tag_prefix": "NewPipeRF",
-    "latest_version": "0.28.8-58-202606140413"
+    "latest_version": "0.28.8-59-202607100326"
   },
   {
     "repo_url": "https://github.com/markusfisch/BinaryEye",
