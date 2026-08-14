@@ -4,7 +4,7 @@
     "original_asset_name": "app-fdroid*",
     "new_display_name": "Music",
     "release_tag_prefix": "RetroMusic",
-    "latest_version": "6.6.0"
+    "latest_version": "7.0.3"
   },
   {
     "repo_url": "https://github.com/TeamNewPipe/NewPipe-refactor-nightly",
